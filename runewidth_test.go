@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 	"testing"
 	"unicode/utf8"
 )
@@ -100,6 +101,41 @@ func TestRuneWidthChecksums(t *testing.T) {
 				testcase.name, gotSHA, testcase.wantSHA)
 		}
 	}
+}
+
+func TestStrictWidthLUT(t *testing.T) {
+	buildStrictWidthLUT()
+	lut := &strictWidthLUT
+	for r := rune(0); r <= utf8.MaxRune; r++ {
+		if got, want := int(lut[0][r]), runeWidthNoLUT(r, false, true); got != want {
+			t.Errorf("strictWidthLUT[0][%U] = %d, want %d", r, got, want)
+		}
+		if got, want := int(lut[1][r]), runeWidthNoLUT(r, true, true); got != want {
+			t.Errorf("strictWidthLUT[1][%U] = %d, want %d", r, got, want)
+		}
+	}
+}
+
+// TestRuneWidthConcurrent exercises concurrent first use of RuneWidth, so
+// that running it alone under -race checks readers against the lazy LUT
+// build. Run before other tests have built the LUT to be effective.
+func TestRuneWidthConcurrent(t *testing.T) {
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(ea bool) {
+			defer wg.Done()
+			c := NewCondition()
+			c.EastAsianWidth = ea
+			for r := rune(0); r <= utf8.MaxRune; r += 7 {
+				if w := c.RuneWidth(r); w < 0 || w > 2 {
+					t.Errorf("RuneWidth(%U) = %d", r, w)
+					return
+				}
+			}
+		}(i%2 == 0)
+	}
+	wg.Wait()
 }
 
 func TestDefaultLUT(t *testing.T) {
